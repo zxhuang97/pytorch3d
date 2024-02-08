@@ -89,6 +89,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("point_face_array_dist_forward", &PointFaceArrayDistanceForward);
   m.def("point_face_array_dist_backward", &PointFaceArrayDistanceBackward);
 
+  // PointFace closest point functions
+  m.def("point_face_closest_point_forward", &PointFaceClosestPointForward);
+  m.def("point_face_closest_point_backward", &PointFaceClosestPointBackward);
+
   // Sample PDF
   m.def("sample_pdf", &SamplePdf);
 

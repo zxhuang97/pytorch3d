@@ -147,6 +147,119 @@ std::tuple<torch::Tensor, torch::Tensor> PointFaceDistanceBackward(
       points, tris, idx_points, grad_dists, min_triangle_area);
 }
 
+
+#ifdef WITH_CUDA
+
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> PointFaceClosestPointForwardCuda(
+    const torch::Tensor& points,
+    const torch::Tensor& points_first_idx,
+    const torch::Tensor& tris,
+    const torch::Tensor& tris_first_idx,
+    const int64_t max_points,
+    const double min_triangle_area);
+#endif
+
+//std::tuple<torch::Tensor, torch::Tensor> PointFaceDistanceForwardCpu(
+//        const torch::Tensor& points,
+//        const torch::Tensor& points_first_idx,
+//        const torch::Tensor& tris,
+//        const torch::Tensor& tris_first_idx,
+//        const double min_triangle_area);
+
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> PointFaceClosestPointForward(
+        const torch::Tensor& points,
+        const torch::Tensor& points_first_idx,
+        const torch::Tensor& tris,
+        const torch::Tensor& tris_first_idx,
+        const int64_t max_points,
+        const double min_triangle_area) {
+    if (points.is_cuda()) {
+#ifdef WITH_CUDA
+        CHECK_CUDA(points);
+    CHECK_CUDA(points_first_idx);
+    CHECK_CUDA(tris);
+    CHECK_CUDA(tris_first_idx);
+    return PointFaceClosestPointForwardCuda(
+        points,
+        points_first_idx,
+        tris,
+        tris_first_idx,
+        max_points,
+        min_triangle_area);
+#else
+        AT_ERROR("Not compiled with GPU support.");
+#endif
+    }
+//    return PointFaceDistanceForwardCpu(
+//            points, points_first_idx, tris, tris_first_idx, min_triangle_area);
+}
+
+// Backward pass for PointFaceDistance.
+//
+// Args:
+//    points: FloatTensor of shape (P, 3)
+//    tris: FloatTensor of shape (T, 3, 3)
+//    idx_points: LongTensor of shape (P,) containing the indices
+//        of the closest face in the example in the batch.
+//        This is computed by the forward pass
+//    grad_dists: FloatTensor of shape (P,)
+//     min_triangle_area: triangles less than this size are considered
+//     points/lines.
+//
+// Returns:
+//    grad_points: FloatTensor of shape (P, 3)
+//    grad_tris: FloatTensor of shape (T, 3, 3)
+//
+
+#ifdef WITH_CUDA
+
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> PointFaceClosestPointBackwardCuda(
+    const torch::Tensor& points,
+    const torch::Tensor& tris,
+    const torch::Tensor& idx_points,
+    const torch::Tensor& grad_dists,
+    const double min_triangle_area);
+#endif
+//std::tuple<torch::Tensor, torch::Tensor> PointFaceDistanceBackwardCpu(
+//        const torch::Tensor& points,
+//        const torch::Tensor& tris,
+//        const torch::Tensor& idx_points,
+//        const torch::Tensor& grad_dists,
+//        const double min_triangle_area);
+
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> PointFaceClosestPointBackward(
+        const torch::Tensor& points,
+        const torch::Tensor& tris,
+        const torch::Tensor& idx_points,
+        const torch::Tensor& grad_dists,
+        const double min_triangle_area) {
+    if (points.is_cuda()) {
+#ifdef WITH_CUDA
+        CHECK_CUDA(points);
+    CHECK_CUDA(tris);
+    CHECK_CUDA(idx_points);
+    CHECK_CUDA(grad_dists);
+    return PointFaceClosestPointBackwardCuda(
+        points, tris, idx_points, grad_dists, min_triangle_area);
+#else
+        AT_ERROR("Not compiled with GPU support.");
+#endif
+    }
+//    return PointFaceDistanceBackwardCpu(
+//            points, tris, idx_points, grad_dists, min_triangle_area);
+}
+
+
+
+
+
+
+
+
+
+
+
+
 // ****************************************************************************
 // *                      FacePointDistance                                   *
 // ****************************************************************************
