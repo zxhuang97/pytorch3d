@@ -10,7 +10,7 @@
 #include <math.h>
 #include <cstdio>
 #include "float_math.cuh"
-
+#include <iostream>
 // Set epsilon for preventing floating point errors and division by 0.
 #ifdef _MSC_VER
 #define kEpsilon 1e-8f
@@ -806,7 +806,7 @@ PointTriangle3DistanceBackward(
 //     dist: the minimum squared distance of p from segment (v0, v1)
 //
 
-__device__ inline float
+__device__ inline thrust::tuple<float, float3>
 PointLineClosestPointForward(const float3& p, const float3& v0, const float3& v1) {
     const float3 v1v0 = v1 - v0;
     const float3 pv0 = p - v0;
@@ -820,7 +820,7 @@ PointLineClosestPointForward(const float3& p, const float3& v0, const float3& v1
     const float3 p_proj = v0 + tt * v1v0;
     const float3 diff = p - p_proj;
     const float dist = dot(diff, diff);
-    return dist;
+    return thrust::make_tuple(dist, p_proj);
 }
 
 // Backward function of the minimum squared Euclidean distance between the point
@@ -896,7 +896,7 @@ PointLineClosestPointBackward(
 //     dist: Float of the squared distance
 //
 
-__device__ inline float PointTriangleClosestPointForward(
+__device__ inline thrust::tuple<float, float3> PointTriangleClosestPointForward(
         const float3& p,
         const float3& v0,
         const float3& v1,
@@ -910,7 +910,7 @@ __device__ inline float PointTriangleClosestPointForward(
     // i.e. p0 = p + t * normal, s.t. (p0 - v0) is orthogonal to normal
     const float t = dot(v0 - p, normal);
     const float3 p0 = p + t * normal;
-
+    float3 closest;
     bool is_inside = IsInsideTriangle(p0, v0, v1, v2, min_triangle_area);
     float dist = 0.0f;
 
@@ -918,16 +918,33 @@ __device__ inline float PointTriangleClosestPointForward(
         // if projection p0 is inside triangle spanned by (v0, v1, v2)
         // then distance is equal to norm(p0 - p)^2
         dist = t * t;
+        closest = p0;
     } else {
-        const float e01 = PointLineClosestPointForward(p, v0, v1);
-        const float e02 = PointLineClosestPointForward(p, v0, v2);
-        const float e12 = PointLineClosestPointForward(p, v1, v2);
+//        const float e01 = PointLineClosestPointForward(p, v0, v1);
+//        const float e02 = PointLineClosestPointForward(p, v0, v2);
+//        const float e12 = PointLineClosestPointForward(p, v1, v2);
+        auto result1 = PointLineClosestPointForward(p, v0, v1);
+        auto result2 = PointLineClosestPointForward(p, v0, v2);
+        auto result3 = PointLineClosestPointForward(p, v1, v2);
 
-        dist = (e01 > e02) ? e02 : e01;
-        dist = (dist > e12) ? e12 : dist;
+        const float dis01 = thrust::get<0>(result1);
+        const float dis02 = thrust::get<0>(result2);
+        const float dis12 = thrust::get<0>(result3);
+        const float3 p01 = thrust::get<1>(result1);
+        const float3 p02 = thrust::get<1>(result2);
+        const float3 p12 = thrust::get<1>(result3);
+//        std::cout << "dis01: " << dis01 <<std::endl;
+//        std::cout << "p01: " << p01.x << " " << p01.y << " " << p01.z << std::endl;
+//        std::cout << "dis02: " << dis02 << std::endl;
+//        std::cout << "p02: " << p02.x << " " << p02.y << " " << p02.z << std::endl;
+//        std::cout << "dis12: " << dis12 <<std::endl;
+//        std::cout << "p12: " << p12.x << " " << p12.y << " " << p12.z << std::endl;
+        closest = (dis01 > dis02) ? p02 : p01;
+        dist = (dis01 > dis02) ? dis02 : dis01;
+        closest = (dist > dis12) ? p12 : closest;
+        dist = (dist > dis12) ? dis12 : dist;
     }
-
-    return dist;
+    return thrust::make_tuple(dist, closest);
 }
 
 // The backward pass for computing the squared distance of a point
@@ -989,9 +1006,17 @@ PointTriangleClosestPointBackward(
         grad_v1 = grad_cross_v1v0;
         grad_v2 = grad_cross_v2v0;
     } else {
-        const float e01 = PointLineClosestPointForward(p, v0, v1);
-        const float e02 = PointLineClosestPointForward(p, v0, v2);
-        const float e12 = PointLineClosestPointForward(p, v1, v2);
+//        const float e01 = PointLineClosestPointForward(p, v0, v1);
+//        const float e02 = PointLineClosestPointForward(p, v0, v2);
+//        const float e12 = PointLineClosestPointForward(p, v1, v2);
+
+
+        const auto r1 = PointLineClosestPointForward(p, v0, v1);
+        const auto r2 = PointLineClosestPointForward(p, v0, v2);
+        const auto r3 = PointLineClosestPointForward(p, v1, v2);
+        float e01 = thrust::get<0>(r1);
+        float e02 = thrust::get<0>(r2);
+        float e12 = thrust::get<0>(r3);
 
         if ((e01 <= e02) && (e01 <= e12)) {
             // e01 is smallest

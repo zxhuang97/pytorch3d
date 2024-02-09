@@ -5,7 +5,7 @@
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree.
  */
-
+#include <iostream>
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -387,6 +387,7 @@ __global__ void ClosestPointForwardKernel(
         const size_t batch_size, // B
         float* __restrict__ dist_objects, // (O,)
         int64_t* __restrict__ idx_objects, // (O,)
+        float* __restrict__ closest, // (O * 3)
         const double min_triangle_area) {
     // This kernel is used interchangeably to compute bi-directional distances
     // between points and triangles/lines. The direction of the distance computed,
@@ -395,9 +396,10 @@ __global__ void ClosestPointForwardKernel(
     // used to distinguish between triangles and lines
 
     // Single shared memory buffer which is split and cast to different types.
-    extern __shared__ char shared_buf[];
+    extern __shared__ char shared_buf[];         // NUM_THREADS * 2
     float* min_dists = (float*)shared_buf; // float[NUM_THREADS]
     int64_t* min_idxs = (int64_t*)&min_dists[blockDim.x]; // int64_t[NUM_THREADS]
+    float* min_points = (float*)&min_idxs[blockDim.x]; // float[NUM_THREADS * 3]
 
     const size_t batch_idx = blockIdx.y; // index of batch element.
 
@@ -437,30 +439,32 @@ __global__ void ClosestPointForwardKernel(
         // and store its result to shared memory
         float min_dist = FLT_MAX;
         size_t min_idx = 0;
+        float3 min_point;
         for (size_t j = tid; j < (endt - startt); j += blockDim.x) {
             size_t point_idx = objects_dim == 1 ? starto + i : startt + j;
             size_t face_idx = objects_dim == 1 ? (startt + j) * targets_dim
                                                : (starto + i) * objects_dim;
 
-            float dist;
-            if (isTriangle) {
-                dist = PointTriangleClosestPointForward(
-                        points_f3[point_idx],
-                        face_f3[face_idx],
-                        face_f3[face_idx + 1],
-                        face_f3[face_idx + 2],
-                        min_triangle_area);
-            } else {
-                dist = PointLineClosestPointForward(
-                        points_f3[point_idx], face_f3[face_idx], face_f3[face_idx + 1]);
-            }
+            auto result = PointTriangleClosestPointForward(
+                    points_f3[point_idx],
+                    face_f3[face_idx],
+                    face_f3[face_idx + 1],
+                    face_f3[face_idx + 2],
+                    min_triangle_area);
+            float dist = thrust::get<0>(result);
+            float3 point = thrust::get<1>(result);
+
 
             min_dist = (j == tid) ? dist : min_dist;
             min_idx = (dist <= min_dist) ? (startt + j) : min_idx;
+            min_point = (dist <= min_dist) ? point : min_point;
             min_dist = (dist <= min_dist) ? dist : min_dist;
         }
         min_dists[tid] = min_dist;
         min_idxs[tid] = min_idx;
+        min_points[tid*3] = min_point.x;
+        min_points[tid*3+1] = min_point.y;
+        min_points[tid*3+2] = min_point.z;
         __syncthreads();
 
         // Perform reduction in shared memory.
@@ -469,6 +473,9 @@ __global__ void ClosestPointForwardKernel(
                 if (min_dists[tid] > min_dists[tid + s]) {
                     min_dists[tid] = min_dists[tid + s];
                     min_idxs[tid] = min_idxs[tid + s];
+                    min_points[tid*3] = min_points[tid*3 + s*3];
+                    min_points[tid*3+1] = min_points[tid*3 + s*3+1];
+                    min_points[tid*3+2] = min_points[tid*3 + s*3+2];
                 }
             }
             __syncthreads();
@@ -477,22 +484,27 @@ __global__ void ClosestPointForwardKernel(
         // Unroll the last 6 iterations of the loop since they will happen
         // synchronized within a single warp.
         if (tid < 32)
-            WarpReduceMin<float>(min_dists, min_idxs, tid);
+            // TODO: warp reduction
+            WarpReduceMin2<float>(min_dists, min_idxs, min_points, tid);
 
         // Finally thread 0 writes the result to the output buffer.
         if (tid == 0) {
             idx_objects[starto + i] = min_idxs[0];
             dist_objects[starto + i] = min_dists[0];
+            closest[(starto + i) * 3 + 0] = min_points[0];
+            closest[(starto + i) * 3 + 1] = min_points[1];
+            closest[(starto + i) * 3 + 2] = min_points[2];
+            // TODO: write to output buffer
         }
     }
 }
 
 std::tuple<at::Tensor, at::Tensor, at::Tensor> ClosestPointForwardCuda(
         const at::Tensor& objects,
-        const size_t objects_dim,
+        const size_t objects_dim,   // 1
         const at::Tensor& objects_first_idx,
         const at::Tensor& targets,
-        const size_t targets_dim,
+        const size_t targets_dim,  //3
         const at::Tensor& targets_first_idx,
         const int64_t max_objects,
         const double min_triangle_area) {
@@ -545,10 +557,13 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> ClosestPointForwardCuda(
         return std::make_tuple(dists, idxs, closest);
     }
 
+    // TODO: Check the memory allocation part
     const int threads = 128;
-    const dim3 blocks(max_objects, batch_size);
-    size_t shared_size = threads * sizeof(size_t) + threads * sizeof(int64_t);
-
+    const dim3 blocks(max_objects, batch_size);   // max num_points x batch size
+    // shared memory for storing
+//    size_t shared_size = threads * sizeof(size_t) + threads * sizeof(int64_t);
+    size_t shared_size = threads * sizeof(size_t)* 4 + threads * sizeof(int64_t);
+    // parallelize over the threads
     ClosestPointForwardKernel<<<blocks, threads, shared_size, stream>>>(
             objects.contiguous().data_ptr<float>(),
             objects_size,
@@ -561,6 +576,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> ClosestPointForwardCuda(
             batch_size,
             dists.data_ptr<float>(),
             idxs.data_ptr<int64_t>(),
+            closest.data_ptr<float>(),
             min_triangle_area);
 
     AT_CUDA_CHECK(cudaGetLastError());
