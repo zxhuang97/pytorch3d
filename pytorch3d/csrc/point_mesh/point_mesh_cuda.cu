@@ -384,6 +384,8 @@ __global__ void ClosestPointForwardKernel(
         const size_t targets_dim, // tD
         const int64_t* __restrict__ objects_first_idx, // (B,)
         const int64_t* __restrict__ targets_first_idx, // (B,)
+        const int64_t* __restrict__ objects_id, // (O,)
+        const int64_t* __restrict__ targets_id, // (T,)
         const size_t batch_size, // B
         float* __restrict__ dist_objects, // (O,)
         int64_t* __restrict__ idx_objects, // (O,)
@@ -444,7 +446,9 @@ __global__ void ClosestPointForwardKernel(
             size_t point_idx = objects_dim == 1 ? starto + i : startt + j;
             size_t face_idx = objects_dim == 1 ? (startt + j) * targets_dim
                                                : (starto + i) * objects_dim;
-
+//            if objects_id[point_idx] == targets_id[face_idx] {
+//                continue;
+//            }
             auto result = PointTriangleClosestPointForward(
                     points_f3[point_idx],
                     face_f3[face_idx],
@@ -507,7 +511,10 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> ClosestPointForwardCuda(
         const size_t targets_dim,  //3
         const at::Tensor& targets_first_idx,
         const int64_t max_objects,
-        const double min_triangle_area) {
+        const double min_triangle_area,
+        const at::Tensor& objects_id,
+        const at::Tensor& targets_id
+        ) {
     // Check inputs are on the same device
     at::TensorArg objects_t{objects, "objects", 1},
             objects_first_idx_t{objects_first_idx, "objects_first_idx", 2},
@@ -573,6 +580,8 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> ClosestPointForwardCuda(
             targets_dim,
             objects_first_idx.contiguous().data_ptr<int64_t>(),
             targets_first_idx.contiguous().data_ptr<int64_t>(),
+            objects_id.contiguous().data_ptr<int64_t>(),
+            targets_id.contiguous().data_ptr<int64_t>(),
             batch_size,
             dists.data_ptr<float>(),
             idxs.data_ptr<int64_t>(),
@@ -785,7 +794,10 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> PointFaceClosestPointForwardCuda(
         const at::Tensor& tris,
         const at::Tensor& tris_first_idx,
         const int64_t max_points,
-        const double min_triangle_area) {
+        const double min_triangle_area,
+        const at::Tensor& points_id,
+        const at::Tensor& tris_id
+        ) {
     return ClosestPointForwardCuda(
             points,
             1,
@@ -794,7 +806,10 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> PointFaceClosestPointForwardCuda(
             3,
             tris_first_idx,
             max_points,
-            min_triangle_area);
+            min_triangle_area,
+            points_id,
+            tris_id
+            );
 }
 
 std::tuple<at::Tensor, at::Tensor, at::Tensor> PointFaceClosestPointBackwardCuda(

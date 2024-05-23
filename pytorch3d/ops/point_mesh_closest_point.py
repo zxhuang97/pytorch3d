@@ -1,5 +1,7 @@
 import pdb
 
+import torch
+
 from pytorch3d import _C
 from pytorch3d.structures import Meshes, Pointclouds
 from torch.autograd import Function
@@ -22,6 +24,8 @@ class _PointFaceClosestPoint(Function):
             tris_first_idx,
             max_points,
             min_triangle_area=_DEFAULT_MIN_TRIANGLE_AREA,
+            points_id=None,
+            tris_id=None,
     ):
         """
         Args:
@@ -56,6 +60,8 @@ class _PointFaceClosestPoint(Function):
             tris_first_idx,
             max_points,
             min_triangle_area,
+            points_id,
+            tris_id
         )
         ctx.save_for_backward(points, tris, idxs)
         ctx.min_triangle_area = min_triangle_area
@@ -79,6 +85,7 @@ def point_mesh_closest_point(
         meshes: Meshes,
         pcls: Pointclouds,
         min_triangle_area: float = 1e-5,
+        part_filter: bool = False,
 ):
     """
     Computes the distance between a pointcloud and a mesh within a batch.
@@ -119,8 +126,12 @@ def point_mesh_closest_point(
     tris = verts_packed[faces_packed]  # (T, 3, 3)
     tris_first_idx = meshes.mesh_to_faces_packed_first_idx()
 
+    # if part_filter:
+    points_id = torch.zeros(points.size(0), dtype=torch.long)
+    tris_id = torch.ones(tris.size(0), dtype=torch.long)
     # point to face distance: shape (P,)
     point_to_face, idxs, closest = point_face_closest_point(
-        points, points_first_idx, tris, tris_first_idx, max_points, min_triangle_area
+        points, points_first_idx, tris, tris_first_idx, max_points, min_triangle_area,
+        points_id, tris_id
     )
     return point_to_face, idxs, closest

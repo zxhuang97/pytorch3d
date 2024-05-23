@@ -156,7 +156,10 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> PointFaceClosestPointFor
     const torch::Tensor& tris,
     const torch::Tensor& tris_first_idx,
     const int64_t max_points,
-    const double min_triangle_area);
+    const double min_triangle_area,
+    const torch::Tensor& points_id,
+    const torch::Tensor& tris_id
+    );
 #endif
 
 //std::tuple<torch::Tensor, torch::Tensor> PointFaceDistanceForwardCpu(
@@ -172,7 +175,10 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> PointFaceClosestPointFor
         const torch::Tensor& tris,
         const torch::Tensor& tris_first_idx,
         const int64_t max_points,
-        const double min_triangle_area) {
+        const double min_triangle_area,
+        const torch::Tensor& points_id,
+        const torch::Tensor& tris_id
+        ) {
     if (points.is_cuda()) {
 #ifdef WITH_CUDA
         CHECK_CUDA(points);
@@ -185,7 +191,10 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> PointFaceClosestPointFor
         tris,
         tris_first_idx,
         max_points,
-        min_triangle_area);
+        min_triangle_area,
+        points_id,
+        tris_id
+        );
 #else
         AT_ERROR("Not compiled with GPU support.");
 #endif
